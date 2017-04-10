@@ -58,6 +58,7 @@ def REML_GWAS (y, K,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenS
     
 
     logdelta = np.asarray(list(range(ngrids+1)) ) /ngrids*(ulim-llim)+llim # create a Grid for for the possible values for the ratio of genetic/random variance: ie with lower/upper bound of -10 to 10, this will go from -10 to +10, with steps of 0.2 (IE:  -10.0  -9.8  -9.6  -9.4 ... 9.2   9.4   9.6   9.8  10.0)
+    delta = np.exp(logdelta)# bring back the delta onto non-log scale
     m = len(logdelta) # how many grid search points we have (determines the length of the main loop)
     # pre-compute ALL the scores for function, this is NOT the same as in paper, as it has an extra factor of delta
     dLL = logLikelihoodDerivative_all(logdelta,eigenSummary.values,etas) 
@@ -88,13 +89,19 @@ def REML_GWAS (y, K,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenS
 
     
     # III) producing results for genetic/random variance componenets
-    maxdelta = np.exp(optlogdelta[ np.argmax(optLL) ]) # find the delta (genetic/random variance ratio), which had the max likelihood
-    maxLL = np.max(optLL)  # save the likelihood of the above as well
+
+    # handle edge case, if we couldn't find a single solution, then we make the assumption that this was due to no Vg (IE delta=Max, and likelihood = lowest)
+    if(len(optLL) == 0) :
+        maxdelta = np.max(delta) 
+        maxLL = np.min(dLL)
+        print("could not find solution to function, assume no Vg, and minimum likelihood")
+    else :
+        maxdelta = np.exp(optlogdelta[ np.argmax(optLL) ]) # find the delta (genetic/random variance ratio), which had the max likelihood
+        maxLL = np.max(optLL)  # save the likelihood of the above as well
 
     maxva = np.sum(etas*etas/(eigenSummary.values+maxdelta))/(n-q)  # get the Genetic variance component sum eta^2 / eigenvalues + maxdelta over the DF: this is equivalent to R/DF = SSG/DF (IE the mean sqared error after Vg)
     maxve = maxva*maxdelta # calculate the radom variance (this is just a simple formula triangle, IE Ve = Vg * Ve/Vg, as Delta = Ve/Vg)
   
- 
 
     return ( {"REML" : maxLL, "delta" : maxdelta, "ve" :maxve, "vg" :maxva } ) # return results
 

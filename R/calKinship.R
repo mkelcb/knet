@@ -25,12 +25,12 @@ standardise_Genotypes = function(X) {
   # calculate col SD and means for SNPs
   colMeans = vector(length = ncol(X)) 
   colSDs = vector(length = ncol(X))
-  
+  n = nrow(X)
   for(i in 1:ncol(X))
   {
     colMeans[i] = mean(X[,i])
-    colSDs[i] = sd(X[,i])
-    
+    #colSDs[i] = sd(X[,i]) # R calculates the sample variance by default, but to ensure numerical consistency to python we use the population variance
+    colSDs[i] = sqrt( var(X[,i]) * (n - 1) / n )
     
   }
   

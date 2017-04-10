@@ -45,16 +45,16 @@ generatePhenotypes = function(h2, causalIndices, standardisedGenotypes, randomSe
   # 3. calculate 'g2'
   var_g = var(g) # calculate varaince of the breeding values
   # calculate the root of the ratio of heritability and breeding value variance
-  scaled =sqrt( h2 / var_g )
+  h2_denom =sqrt( h2 / var_g )  # this is the 'denominator' for h2, IE 1/(Vg+Ve)
   
  # loop through breeding values and calculate g2 as: g/res
   g2 =vector (length = numIndividuals)
-  for(i in 1:numIndividuals) { g2[i] = g[i] * scaled }
+  for(i in 1:numIndividuals) { g2[i] = g[i] * h2_denom }
 
   
   # 4. calculate raw phenotypes
   noise = rnorm(numIndividuals, mean = 0.0, sd = sqrt(1.0 - h2))
-  pheno = g2 + noise
+  pheno = g2 + noise # add some gaussian noise to the breeding values to dilute them IE: Y = g + e
 
   # 5. standardise them into z-scores (mean=0, var=0)
   pheno = scale(pheno)
@@ -85,7 +85,7 @@ visualiseH2 = function( effects, causalIndices, numSNPs) {
 # draws over a heritability plot, red bounding boxes, where it has found h2 (shouldbe called after visualiseH2)
 visualiseRegions = function(  regions, numSNPs, backgroundRegions = FALSE) {
   values = rep(0,numSNPs)
-
+if(length(regions) < 1) { return() }
   regionIndices = vector()
   for(i in 1:length(regions)) { # create all indices within a contiguous region
     regionStart = regions[[i]][1]

@@ -32,7 +32,7 @@ def standardise_Genotypes(X) :
       
     for i in range(0, X.shape[1]): # go through each col
         colMeans[i] = np.mean(X[:,i])
-        colSDs[i] = np.std(X[:,i])
+        colSDs[i] = np.std(X[:,i]) # this is the Population variance, IE no correction DFs lost
 
      
       

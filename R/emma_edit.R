@@ -55,7 +55,7 @@ emma.REMLE_GWAS <- function(y, K,  X = NULL, ngrids=100, llim=-10, ulim=10, esp=
     delta <- exp(logdelta)# bring back the delta onto non-log scale
     Lambdas <- matrix(eig.R$values,n-q,m) + matrix(delta,n-q,m,byrow=TRUE) # matrix of eigenValues + Deltas
     Etasq <- matrix(etas*etas,n-q,m) # square Etas (  IE (XtY)^2  )
-    
+
     # Pre-compute the Derivative loglik for ALL possible deltas
     # LL  <- 0.5*      ((n-q)*(log((n-q)/(2*pi))-1-log(colSums(Etasq/Lambdas)))      -colSums(log(Lambdas))) # cache all Log Likelihood: these are NEVER used... duh
     #dLL <- 0.5*delta*((n-q)*colSums(Etasq/(Lambdas*Lambdas))/colSums(Etasq/Lambdas)-colSums(1/Lambdas))  # cache all 1st derivative of Log Likelihood
@@ -86,15 +86,21 @@ emma.REMLE_GWAS <- function(y, K,  X = NULL, ngrids=100, llim=-10, ulim=10, esp=
       }
     }  # this will normally only find a single solution
 
-  
-  # III) producing results for genetic/random variance componenets
-  maxdelta <- exp(optlogdelta[which.max(optLL)]) # find the delta (genetic/random variance ratio), which had the max likelihood
-  maxLL <- max(optLL)  # save the likelihood of the above as well
-
+    # handle edge case, if we couldn't find a single solution, then we make the assumption that this was due to no Vg (IE delta=Max, and likelihood = lowest)
+    if(length(optLL) == 0) {  
+      maxdelta = max(delta) 
+      maxLL = min(dLL)
+      print(paste("could not find solution to function, assume no Vg, and minimum likelihood"))
+    } else {
+      # III) producing results for genetic/random variance componenets
+      maxdelta <- exp(optlogdelta[which.max(optLL)]) # find the delta (genetic/random variance ratio), which had the max likelihood
+      maxLL <- max(optLL)  # save the likelihood of the above as well
+    }
+    
   maxva <- sum(etas*etas/(eig.R$values+maxdelta))/(n-q)  # get the Genetic variance component sum eta^2 / eigenvalues + maxdelta over the DF: this is equivalent to R/DF = SSG/DF (IE the mean sqared error after Vg)
   maxve <- maxva*maxdelta # calculate the radom variance (this is just a simple formula triangle, IE Ve = Vg * Ve/Vg, as Delta = Ve/Vg)
 #
-  blups = computeBLUPs(y, K, X, U = eig.R$vectors, lamda = eig.R$values, maxdelta)
+  # blups = computeBLUPs(y, K, X, U = eig.R$vectors, lamda = eig.R$values, maxdelta)
   
  # blups2 = computeBLUPs_kerelRidge(y, K, X, U = eig.R$vectors, lamda = eig.R$values, maxdelta)
  # blups3 = computeBLUPs_kerelRidge2(y, K, X, U = eig.R$vectors, lamda = eig.R$values, maxdelta)
