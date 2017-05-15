@@ -29,28 +29,33 @@ import collections
 from scipy.stats import chisqprob
 
 
-def REML_GWAS (y, K,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenSummary = None) :
+def REML_GWAS (y, K = None,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenSummary = None) :
+    
+    n = len(y)  # number of individuals in study
     
   # I) Data QC: determine if data passed in is valid to run algo
     if X == None:  # This algo will NOT run if there are no Fixed effects, so if there were none passed in, then we add an intercept ( a column of 1s)
-        print("no fixed effects specified, adding an intercept")
+        # print("no fixed effects specified, adding an intercept")
         X =  np.ones( (y.shape[0], 1) ) # make sure that this is a 2D array, so that we can refer to shape[1]
+    else : 
+        if  np.linalg.det( np.dot(X.T,X) ) == 0  :raise ValueError('X is singular')   # if the determinant of XtX is 0, then matrix is singular ( only test this if we haven't just generated an intercept)
+        if X.shape[0] != n : raise ValueError('malformed fixed effects matrix (no enough observations)')  
         
-    n = len(y)  # number of individuals in study
-    t = K.shape[0]  # the row/col of the kinship matrix (should be same as n)
+    
     q = X.shape[1]  # the number of fixed effect predictors
 
-    if K.shape[1] != t : raise ValueError('malformed Kinship matrix (rows/cols dont equal)')   
-    if X.shape[0] != n : raise ValueError('malformed fixed effects matrix (no enough observations)')  
-   
- 
-  
-    if  np.linalg.det( np.dot(X.T,X) ) == 0  :raise ValueError('X is singular')   # if the determinant of XtX is 0, then matrix is singular
-        
+    if eigenSummary is None and K is None : 
+        raise ValueError('Either K or and Eigen Summary must be supplied!') 
+               
+    if K is not None :
+        t = K.shape[0]  # the row/col of the kinship matrix (should be same as n)
+        if K.shape[1] != t : raise ValueError('malformed Kinship matrix (rows/cols dont equal)')   
+    
+
   
   # II) main REML algo: NR with Grid search, performed on the likelihood expressed in terms of the eigen summary of the data to find Delta (Ve/Vg)
   # if no strain incidence matrix was passed in (IE it is a GWAS)
-    if  eigenSummary == None :  # if cached Eigen values were not passed in
+    if  eigenSummary is None :  # if cached Eigen values were not passed in
         eigenSummary = dataEigenSummary(K,X) # compute eigen summary of Kinship/Fixed effects: returns list with 2 elements, [0]  n-1 eigen valus, [1]:  n-1 eigenvectors, each with length of n
     
     etas = np.dot(eigenSummary.vectors.T, y)  # (n-1):1 column vector: matrix product of the t(EigenVctors) * Y, this is kindof like 'XtY', as we replaced the K and X with their eigen vectors
@@ -103,7 +108,7 @@ def REML_GWAS (y, K,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenS
     maxve = maxva*maxdelta # calculate the radom variance (this is just a simple formula triangle, IE Ve = Vg * Ve/Vg, as Delta = Ve/Vg)
   
 
-    return ( {"REML" : maxLL, "delta" : maxdelta, "ve" :maxve, "vg" :maxva } ) # return results
+    return ( {"REML" : maxLL, "delta" : maxdelta, "ve" :maxve, "vg" :maxva, "eigSum" :eigenSummary } ) # return results
 
 
 # Eigen decomposition summary of the kinship matrix + Fixed effects ( if X is 0, then this reduces to eigen(K,symmetric=TRUE) )

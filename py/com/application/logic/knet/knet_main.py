@@ -131,18 +131,18 @@ class knn:
         
         
      
-    def connectLayers(self) :   # connects up each layer to its next, and initialises the Weighted layers with the correct dimension matrices  
+    def connectLayers(self, initWeights = True) :   # connects up each layer to its next, and initialises the Weighted layers with the correct dimension matrices  
         # the first layer only has a next layer
-        self.layers[0].initConnections( {"PREV":None, "NEXT":self.layers[1] } )
+        self.layers[0].initConnections( {"PREV":None, "NEXT":self.layers[1] }, initWeights )
           
         if self.num_layers > 2 : # if there  are any hidden layers
             
             for i in range( 1, (self.num_layers-1) ):  # go through all layers except last
-               self.layers[i].initConnections(  {"PREV":self.layers[i-1], "NEXT":self.layers[i+1] } )
+               self.layers[i].initConnections(  {"PREV":self.layers[i-1], "NEXT":self.layers[i+1] }, initWeights )
             
 
         # connect Output
-        self.layers[-1].initConnections( {"PREV":self.layers[-2], "NEXT":None}  ) # the last layer only has a prev layer
+        self.layers[-1].initConnections( {"PREV":self.layers[-2], "NEXT":None}, initWeights  ) # the last layer only has a prev layer
            
         print("All layers created, Neural Network ready")
         
@@ -178,7 +178,11 @@ class knn:
         evaluation = "prediction (r^2)"
         if outPutType != OUT_REGRESSION :  evaluation = "accuracy (%)"                      
         
-        
+        results = {}
+        results["epochs"] = list()
+        if eval_train: results["train_accuracy"]  = list()
+        if eval_test: results["test_accuracy"]  = list()
+
         for t in range(0, num_epochs):
             out_str = "it: "  + str(t) # "[{0:4d}] ".format(t)
 
@@ -190,7 +194,8 @@ class knn:
 
 
             if t % eval_freq == 0: # only evaluation fit every 100th or so iteration, as that is expensive
-            
+                results["epochs"].append(t) # add the epoch's number
+                
                 if eval_train:
                     N_train = len(train_Y)*len(train_Y[0])
                     #print("N_train is:" + str(N_train))
@@ -218,8 +223,9 @@ class knn:
                       ### rounded prediction 
                       #  yhat = np.argmax(yhat, axis=1)
                       #  errs += np.sum(1-b_labels[np.arange(len(b_labels)), yhat])
-                    
-                    out_str =  out_str + " / Training " +evaluation +": "+ str( round( float(totals)/N_train,5) )
+                    accuracy = round( float(totals)/N_train,5)
+                    results["train_accuracy"].append(accuracy)
+                    out_str =  out_str + " / Training " +evaluation +": "+ str( accuracy )
     
                 if eval_test:
                     N_test = len(test_Y)*len(test_Y[0])
@@ -245,11 +251,14 @@ class knn:
                                                    
                         totals = totals +currentRate # sum in all minibatches
 
-                    
-                    out_str =  out_str + " / Test " +evaluation +": "+  str( round( float(totals)/N_test,5) )
+                    accuracy = round( float(totals)/N_test,5)
+                    results["test_accuracy"].append(accuracy)
+                    out_str =  out_str + " / Test " +evaluation +": "+  str( accuracy )
 
 
-            print(out_str)
+            print(out_str, flush=True)
+            
+        return ( { "results" : results})
             
             
     ####### Debugger functions: used for numerical Gradient checking 
@@ -367,7 +376,7 @@ class knnDummyLayer :
     def calcError(self,Input) : ...   
     def backpropagate(self,Input) : ...   
     def update(self, eta, minibatch_size, friction) : ...
-    def initConnections(self, prevNext = {} ) : ...
+    def initConnections(self, prevNext = {}, initWeights = True ) : ...
     def getDebugInfo(self,dataSoFar, Type) : return(dataSoFar)  # the base method still needs to return the passed in data if nothing else   
     def addDebugData(self,allWeights)  : return(allWeights)   # the base method still needs to return the passed in data if nothing else
     
@@ -422,7 +431,7 @@ class knnBaseLayer(knnDummyLayer) :
     #def update(self,eta, minibatch_size, friction) : ...
     
     # Lets each layer know about its neighbours: the previous and next layer in the stack: this is called once the entire network has been set up
-    def initConnections(self, prevNext = {} ) :
+    def initConnections(self, prevNext = {}, initWeights = True ) :
         # check previous layer
         if prevNext["PREV"] is not None : self.prevLayer = prevNext["PREV"] 
          
@@ -432,7 +441,7 @@ class knnBaseLayer(knnDummyLayer) :
 
 
 # specialised layer type used by Convolutional topologies:  takes input, and splits it into a set of predefined regions, and passes these along to the next layer
-# params: [totalNumUnitsinLayer, lastUnitInRegion1, lastUnitInRegion2,...,, lastUnitInRegionn]
+# params: [totalNumUnitsinLayer, regionStart1, regionEnd1, regionStart2, regionEnd2, regionStart3....]
 class knnSplitter(knnBaseLayer) :
     def __init__(self, iparams, iparentNetwork):
         super().__init__(iparams, iparentNetwork) # call init on parent
@@ -441,14 +450,13 @@ class knnSplitter(knnBaseLayer) :
         self.Input_S = None
       
         # parse params into regions
-        self.numRegions= len(self.params) -1  # 1st element sets the number of regions we will need, so the number of regions will be length of the params-1
+        self.numRegions= int ( (len(self.params) -1) /2  ) # 1st element sets the number of regions we will need, so the number of regions will be half the length of the params-1 (as we have 2 values / region)
                               # params[1] = a = # units in current layer;  need to keep the 1st element being the total number of units in this layeer (including in all regions), so that other layers can access this information the same way as for any other layers)
         regionStart = int(0)
-        for i in range( 1, len(self.params) ): # loop from 2nd element, where each element is the LAST predictor in matrix
-            regionEnd = int(self.params[i])
-            
+        for i in range( 1, len(self.params),2 ): # loop from 2nd element, where two consecutive elements define the start/end of region
+            regionStart = int(self.params[i])
+            regionEnd = int(self.params[i+1])
             self.regions.append( np.array([regionStart, regionEnd]) )
-            regionStart = regionEnd #the next region's start is just the one after this ended
             
 
     # Splitter splits an incoming Input data into the parameters' predefined set of regions
@@ -517,7 +525,7 @@ class knnJoiner(knnBaseLayer) :
      
     # Joiner performs the opposite function for backpropagation: it splits the incoming Weights, and passes along the entire Error Delta
     def calcError(self,Input) :
-        self.Error_D = Input #  save the entie Error_D  of next layer, which is NOT split, but will be used to multiply each weight by
+        self.Error_D = Input #  save the entire Error_D  of next layer, which is NOT split, but will be used to multiply each weight by
          
         # get the Weight of the next layer, this will be needed by the Conv1D layer that follows this
         weightOfNextLayer = self.nextLayer.Weights_W
@@ -673,11 +681,11 @@ class knnLayer(knnBaseLayer):
      
           
     # sets up relationships to neighbouring layers, and if we have previous layer (IE it is not an input or a nested minilayer in a Conv), then we can init the weight matrix to the correct dimension
-    def initConnections(self, prevNext = {} ): 
+    def initConnections(self, prevNext = {}, initWeights = True ): 
         super().initConnections(prevNext)
         
         # Weights can be initialised only by knowing the number of units in the PREVIOUS layer (but we do NOT need to know the size of the minibatches (IE n), as Weight matrix' dimension does not depend on that
-        if (self.prevLayer is not None) : # IE the we are testing if, subtype != LAYER_SUBTYPE_OUTPUT
+        if (self.prevLayer is not None and initWeights) : # IE the we are testing if, subtype != LAYER_SUBTYPE_OUTPUT
             prevLayer_size = self.prevLayer.params[0] # find out how big the next layer is 
             self.initWeightMatrix(prevLayer_size)
 
@@ -691,7 +699,7 @@ class knnLayer(knnBaseLayer):
             
         if self.biasEnabled :  # if we have bias/intercept, we add a row of Weights that we keep separate
             self.Weights_bias = np.random.normal(size=(1,self.Weights_W.shape[1]), scale=np.sqrt(2.0 / prevLayer_size ))  
-            self.Bias_Momentum = np.zeros(self.Weights_bias.shape[0]) # stores a 'dampened' version of past weights  for intercepts
+            self.Bias_Momentum = np.zeros( (1,self.Weights_bias.shape[0]) ) # stores a 'dampened' version of past weights  for intercepts
 
                          
     # performs the addition of the bias terms effect  onto the output
@@ -715,9 +723,9 @@ class knnLayer(knnBaseLayer):
             self.Output_Z = self.Input_S.dot(self.Weights_W)  # the output is constructed by first multiplying the input by the weights
             
        
-        self.Output_Z = self.add_bias(self.Output_Z) # we then add the intercept (the liner predictor is now complete)
+        self.Output_Z = self.add_bias(self.Output_Z) # we then add the intercept (the linear predictor is now complete)
          
-        # non Output subtype layers need to figure out the rate of change in the output (this is redundant, if we are just making predictions)
+        # non Output subtype layers need to figure out the rate of change in the output (this is redundant, if we are just making predictions, IE backpropagation does NOT follow this)
         if (self.subtype != LAYER_SUBTYPE_OUTPUT) :  self.Derivative_Fp = self.activation(self.Output_Z, deriv=True).T  # this is transposed, as D is also transposed during back propagation
          
         # output is completed by passing the linear predictor through an activation (IE we squash it through a sigmoid)
