@@ -29,28 +29,33 @@ import collections
 from scipy.stats import chisqprob
 
 
-def REML_GWAS (y, K,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenSummary = None) :
+def REML_GWAS (y, K = None,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenSummary = None) :
+    
+    n = len(y)  # number of individuals in study
     
   # I) Data QC: determine if data passed in is valid to run algo
     if X == None:  # This algo will NOT run if there are no Fixed effects, so if there were none passed in, then we add an intercept ( a column of 1s)
-        print("no fixed effects specified, adding an intercept")
+        # print("no fixed effects specified, adding an intercept")
         X =  np.ones( (y.shape[0], 1) ) # make sure that this is a 2D array, so that we can refer to shape[1]
+    else : 
+        if  np.linalg.det( np.dot(X.T,X) ) == 0  :raise ValueError('X is singular')   # if the determinant of XtX is 0, then matrix is singular ( only test this if we haven't just generated an intercept)
+        if X.shape[0] != n : raise ValueError('malformed fixed effects matrix (no enough observations)')  
         
-    n = len(y)  # number of individuals in study
-    t = K.shape[0]  # the row/col of the kinship matrix (should be same as n)
+    
     q = X.shape[1]  # the number of fixed effect predictors
 
-    if K.shape[1] != t : raise ValueError('malformed Kinship matrix (rows/cols dont equal)')   
-    if X.shape[0] != n : raise ValueError('malformed fixed effects matrix (no enough observations)')  
-   
- 
-  
-    if  np.linalg.det( np.dot(X.T,X) ) == 0  :raise ValueError('X is singular')   # if the determinant of XtX is 0, then matrix is singular
-        
+    if eigenSummary is None and K is None : 
+        raise ValueError('Either K or and Eigen Summary must be supplied!') 
+               
+    if K is not None :
+        t = K.shape[0]  # the row/col of the kinship matrix (should be same as n)
+        if K.shape[1] != t : raise ValueError('malformed Kinship matrix (rows/cols dont equal)')   
+    
+
   
   # II) main REML algo: NR with Grid search, performed on the likelihood expressed in terms of the eigen summary of the data to find Delta (Ve/Vg)
   # if no strain incidence matrix was passed in (IE it is a GWAS)
-    if  eigenSummary == None :  # if cached Eigen values were not passed in
+    if  eigenSummary is None :  # if cached Eigen values were not passed in
         eigenSummary = dataEigenSummary(K,X) # compute eigen summary of Kinship/Fixed effects: returns list with 2 elements, [0]  n-1 eigen valus, [1]:  n-1 eigenvectors, each with length of n
     
     etas = np.dot(eigenSummary.vectors.T, y)  # (n-1):1 column vector: matrix product of the t(EigenVctors) * Y, this is kindof like 'XtY', as we replaced the K and X with their eigen vectors
@@ -58,6 +63,7 @@ def REML_GWAS (y, K,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenS
     
 
     logdelta = np.asarray(list(range(ngrids+1)) ) /ngrids*(ulim-llim)+llim # create a Grid for for the possible values for the ratio of genetic/random variance: ie with lower/upper bound of -10 to 10, this will go from -10 to +10, with steps of 0.2 (IE:  -10.0  -9.8  -9.6  -9.4 ... 9.2   9.4   9.6   9.8  10.0)
+    delta = np.exp(logdelta)# bring back the delta onto non-log scale
     m = len(logdelta) # how many grid search points we have (determines the length of the main loop)
     # pre-compute ALL the scores for function, this is NOT the same as in paper, as it has an extra factor of delta
     dLL = logLikelihoodDerivative_all(logdelta,eigenSummary.values,etas) 
@@ -88,15 +94,21 @@ def REML_GWAS (y, K,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenS
 
     
     # III) producing results for genetic/random variance componenets
-    maxdelta = np.exp(optlogdelta[ np.argmax(optLL) ]) # find the delta (genetic/random variance ratio), which had the max likelihood
-    maxLL = np.max(optLL)  # save the likelihood of the above as well
+
+    # handle edge case, if we couldn't find a single solution, then we make the assumption that this was due to no Vg (IE delta=Max, and likelihood = lowest)
+    if(len(optLL) == 0) :
+        maxdelta = np.max(delta) 
+        maxLL = np.min(dLL)
+        print("could not find solution to function, assume no Vg, and minimum likelihood")
+    else :
+        maxdelta = np.exp(optlogdelta[ np.argmax(optLL) ]) # find the delta (genetic/random variance ratio), which had the max likelihood
+        maxLL = np.max(optLL)  # save the likelihood of the above as well
 
     maxva = np.sum(etas*etas/(eigenSummary.values+maxdelta))/(n-q)  # get the Genetic variance component sum eta^2 / eigenvalues + maxdelta over the DF: this is equivalent to R/DF = SSG/DF (IE the mean sqared error after Vg)
     maxve = maxva*maxdelta # calculate the radom variance (this is just a simple formula triangle, IE Ve = Vg * Ve/Vg, as Delta = Ve/Vg)
   
- 
 
-    return ( {"REML" : maxLL, "delta" : maxdelta, "ve" :maxve, "vg" :maxva } ) # return results
+    return ( {"REML" : maxLL, "delta" : maxdelta, "ve" :maxve, "vg" :maxva, "eigSum" :eigenSummary } ) # return results
 
 
 # Eigen decomposition summary of the kinship matrix + Fixed effects ( if X is 0, then this reduces to eigen(K,symmetric=TRUE) )
@@ -267,6 +279,103 @@ def computeBLUPs_RidgeBLUP(y,X, delta) :
     result.BLUP = blup
     result.BETA =Beta_BLUP
     return(result)
+
+# Ridge via the Xt(XXt +D)^-1 y
+def computeBLUPs_RidgeBLUP_morep(y,X, delta) :  ## this produces a mathematically equivalent results to the above ( for the BLUPs, not for the Betas)
+  
+    Xt = X.T  # 100 x 500
+    n = X.shape[0] # n x p
+    I = np.identity(n)
+    XtX_inv = np.linalg.inv( np.dot(X , Xt) + delta*I) # 
+    XtX_inv_y = np.dot( XtX_inv, y) # n x 1
+    Beta_BLUP =  np.dot(Xt, XtX_inv_y) # to ensure a multiplication of p x n * n x 1 = p x 1
+    BLUP = np.dot(X,Beta_BLUP)
+  
+    return(BLUP)
+
+def backCalculate_Beta_BLUP(g, X) :  # when there are more predictors than individuals (GWAS case)
+    Xt = X.T
+    XXt_inv_g = np.dot( np.linalg.inv( np.dot(X,Xt ) ), g )
+    Beta_BLUP = Xt.dot( XXt_inv_g)
+    #           9x2        2x9 * 9x2= 2x1   * 1x1 =  9x2 * 2x2 * 2x1 = 9x2 * 2x1 = 9x1
+    return(Beta_BLUP)
+
+
+# predict phenotypes for unseen data
+def predictYhat(X, Beta) :  
+    return(X.dot(Beta))
+
+
+# performs heteroskedastic Ridge regression and returns the Betas for the case when there are more P > n
+def HRHridge_morep(y,X, Betas, h2) :  
+  
+    # assumes both X/y have been standardised
+    
+    # complete formula: (from RidgeBLUPreview_143712_NOTES.pdf)
+    # Beta = WXt(XWXt + delta)y
+
+    # W: Weight Matrix: diag ( tp^2 )
+    # tp = Beta_p^2 / Sigma^2_e
+    # as y is standardised to have unit variance, 
+    # Va = h2, Va + Ve = 1, so Ve = 1-h2
+    Ve = 1-h2
+    delta = (1-h2) / h2
+    
+     # (1-Ve)/((1-Ve)+Ve) = 1/Delta - (1-Ve)/((1-Ve)+Ve)/delta
+     # 1-Ve = 1/delta - (1-Ve)/Delta
+
+    Xt = X.T  # 100 x 500
+    tp =  (np.array(Betas)**2) / Ve # the weight matrix is W = Beta^2/Ve
+    Xt = np.dot(np.diag(tp),Xt) # multiply in the Weights so Xt is now WXt: this is px p p x n
+    
+    n = X.shape[0] # n x p
+    I = np.identity(n)
+    XtX_inv = np.linalg.inv( np.dot(X , Xt) + delta*I) # 
+    XtX_inv_y = np.dot( XtX_inv, y) # n x 1
+    Beta_BLUP =  np.dot(Xt, XtX_inv_y) # to ensure a multiplication of p x n * n x 1 = p x 1
+
+  
+    return(Beta_BLUP)
+
+
+# this is NOT analogous to the Ridge's more p vs more n... 
+# Beecause XtW multiplication implies we have information/weight for each OBSERVATION, rather than for each predictor
+def HRHridge_moren_Wis_n(y,X, Betas, h2) :  
+  
+    # assumes both X/y have been standardised
+    
+    # complete formula: (from RidgeBLUPreview_143712_NOTES.pdf)
+    # Beta = WXt(XWXt + delta)y
+
+    # W: Weight Matrix: diag ( tp^2 )
+    # tp = Beta_p^2 / Sigma^2_e
+    # as y is standardised to have unit variance, 
+    # Va = h2, Va + Ve = 1, so Ve = 1-h2
+    Ve = 1-h2
+    delta = (1-h2) / h2
+    
+     # (1-Ve)/((1-Ve)+Ve) = 1/Delta - (1-Ve)/((1-Ve)+Ve)/delta
+     # 1-Ve = 1/delta - (1-Ve)/Delta
+
+    Xt = X.T  # 100 x 500
+    tp =  (np.array(Betas)**2) / Ve # the weight matrix is W = Beta^2/Ve
+    
+          
+          # (XtWX +L)^-1 XtWY
+    Xt = np.dot(Xt, np.diag(tp)) # multiply in the Weights so Xt is now WXt: pxn x n x n = p xn
+    n = X.shape[0] # n x p
+    I = np.identity(n)
+    XtY = np.dot(Xt,y)
+    XtXD_inv = np.linalg.inv( np.dot(Xt , X) +delta*I )
+      
+    Beta_BLUP = np.dot(XtXD_inv , XtY)
+   
+            
+            
+ 
+  
+    return(Beta_BLUP)
+
 
 # usage:
 #BLUP_hat = np.dot(X , Bresults.BETA)
