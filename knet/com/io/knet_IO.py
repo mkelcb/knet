@@ -51,6 +51,25 @@ import gc
 
 #male_genotypes = genotypes[males.values]
 #location = args.out
+
+def get_d_code(dataType) :     # need to  convert dataType into single letter codes
+    if( dataType == 'float32') : d_code = 'f'
+    elif ( dataType == 'float16') : d_code = 'e' 
+    else : d_code = 'd' 
+    
+    return(d_code)
+
+def writePLINK_Pheno(location, y, indList = None) :
+    y = y.ravel()
+    
+    with open(location + ".pheno", "w") as file: 
+        for i in range(0, len(y) ):
+            if indList is None : file.write("IND"+ str(int(i+1)) + "\tIND" + str(int(i+1)) + "\t" +str(y[i]) + "\n")
+            else : file.write(str(indList[i]) + "\t" +str(indList[i]) + "\t" +str(y[i]) + "\n")
+
+
+
+
 def writePLINK(location, M) :
     # load plink file
     bed = pyplink.PyPlink(location, mode='w', bed_format='SNP-major')
@@ -58,14 +77,23 @@ def writePLINK(location, M) :
         #print("writing SNP", i, "to file")
         bed.write_genotypes(M[:,i])
     
+    with open(location + ".fam", "w") as file: 
+        for i in range( M.shape[0] ):
+            file.write("IND"+ str(int(i+1)) + "\tIND" + str(int(i+1)) + "\t0\t0\t0\t0" + "\n") 
 
+    
+    with open(location + ".bim", "w") as file: 
+        for i in range( M.shape[1] ):
+            file.write( "1\tSNP" + str(int(i)) + "\t0\t" + str( int( (i+1) * 1000)) + "\tA\tB"  + "\n") 
+
+#location = args.knet, loadPhenos = False
 #male_genotypes = genotypes[males.values]
 def loadPLINK(location, loadPhenos = True, caseControl = True, recodeCaseControl = True, replaceMissing = False) :
     # load plink file
     bed = pyplink.PyPlink(location, mode='r', bed_format='SNP-major')
     bim = bed.get_bim()
     fam = bed.get_fam()
-
+    
     if loadPhenos :
         # process phenotypes
         status= fam['status'] 
@@ -98,9 +126,9 @@ def loadPLINK(location, loadPhenos = True, caseControl = True, recodeCaseControl
     id_list.append( list(fam["fid"]))
     id_list.append( list(fam["iid"]))  
         
-    return ( {"y" : y, "M" : M, "rsid" : loci_names.tolist(), "IDs" : id_list} ) # return results
+    return ( {"y" : y, "M" : M, "rsid" : loci_names.tolist(), "IDs" : id_list, "A1" : list(bim.a1), "A2" : list(bim.a2) } ) # return results
 
-
+#A1_alleles = list(bim.a1)
 def recodeCaseControlOneHot(status) :
     # transcode phenotype into 1 hot array
     y = np.zeros( (len(status),2)  )
@@ -136,18 +164,18 @@ def recodeOneHotCaseControl(y) :
 #results = loadPLINKPheno(location, caseControl = False, recodeCaseControl = False)
 def loadPLINKPheno(location, caseControl = True, recodeCaseControl = True) :
     status = list()
-
+    #print("FUCK YOU")
     with open(location, "r") as id:
         for i in id:
             itmp = i.rstrip().split()
-            status.append( np.float64(itmp[2]) )
+            status.append( np.float32(itmp[2]) )
  
     if caseControl : # if trait is binary
         if recodeCaseControl : y = recodeCaseControlQuantitative(status) # if we want to treat it as a quantitative trait
         else : y = recodeCaseControlOneHot(status)# otherwise use the 'softmax' format                                      
     else : y = np.array(status)# otherwise just leave it alone
     
-    return ( y )
+    return (  y.astype('float32')  )
     
 
 
@@ -162,7 +190,9 @@ def concatChroms(M_list) :
 ##################################################################################################
 
 # writes a matrix onto disk in a binary (2 files, 1 that stores the dimensions, the other the binary data)
-def writeMatrixToDisk(location,data, dataType ="d") :
+def writeMatrixToDisk(location,data, dataType ="float32") :
+    d_code = get_d_code(dataType)
+    
     # get dimensions of matrix
     nrows = data.shape[0]
     ncols = data.shape[1]
@@ -174,14 +204,15 @@ def writeMatrixToDisk(location,data, dataType ="d") :
     # flatten matrix
     flat = data.ravel()
 
-    flatData = struct.pack(dataType*len(flat),*flat  )
+    flatData = struct.pack(d_code*len(flat),*flat  )
     with open(location + ".bin", "wb") as flat_File: 
         flat_File.write(flatData) 
     
 
 # loads matrix from disk ( that was written by the above)
-def loadMatrixFromDisk(location, dataType ="d") :
-
+def loadMatrixFromDisk(location, dataType ="float32") :
+    d_code = get_d_code(dataType)
+    
     # load id file to get dimensions
     with open(location + ".id", "r") as idFile:
         itmp = idFile.readline().rstrip().split()
@@ -194,27 +225,31 @@ def loadMatrixFromDisk(location, dataType ="d") :
     # open binary file
     with open(location + ".bin", "rb") as BinFile:
         BinFileContent = BinFile.read()
-    
+  
     # reformat data into correct dimensions
-    flat = np.array( struct.unpack(dataType*totalNum, BinFileContent  ) )
+    flat = np.array( struct.unpack(d_code*totalNum, BinFileContent  ), dtype = dataType )
     data = flat.reshape(nrows,ncols)
     return(data)
 
 
 # writes an array onto disk ( 2 files, 1 text file that stores the length, the other the binary)
-def writeVectorToDisk(location,data, dataType ="d") :
+def writeVectorToDisk(location,data, dataType ="float32") :
+    d_code = get_d_code(dataType)
+    
     # write the dimensions onto disk
     with open(location + ".id", "w") as idFile: 
         idFile.write( str( len(data) ) )
 
-    flatData = struct.pack(dataType*len(data),*data  )
+    flatData = struct.pack(d_code*len(data),*data  )
     with open(location + ".bin", "wb") as flat_File: 
         flat_File.write(flatData) 
     
+
     
 # loads array from disk ( that was written by the above function)
-def loadVectorFromDisk(location, dataType ="d") :
-
+def loadVectorFromDisk(location, dataType ="float32") :
+    d_code = get_d_code(dataType)
+    
     # load id file to get dimensions
     with open(location + ".id", "r") as idFile:
         itmp = idFile.readline().rstrip()
@@ -225,8 +260,35 @@ def loadVectorFromDisk(location, dataType ="d") :
         BinFileContent = BinFile.read()
     
     # reformat data into correct dimensions
-    flat = np.array( struct.unpack(dataType*totalNum, BinFileContent  ) )
+    flat = np.array( struct.unpack(d_code*totalNum, BinFileContent  ), dtype = dataType  )
     return(flat)
+    
+    
+def loadIndices(location) :
+    fileName = location
+    indices = list()
+    with open(fileName, "r") as id:
+        for i in id:
+            itmp = i.rstrip().split()
+            indices.append( np.int(itmp[0]) )
+      
+    return ( np.array(indices) )
+    
+def loadsnpIDs(location) :
+    fileName = location
+    snpIDs = list()
+    with open(fileName, "r") as id:
+        for i in id:
+            itmp = i.rstrip().split()
+            snpIDs.append( itmp[0] )
+      
+    return ( np.array(snpIDs) )
+
+def writeSNPeffects(location,SNPIds, SNP_effects) :
+    fileName = location
+    with open(fileName, "w") as file: 
+        for i in range( len(SNPIds) ):
+            file.write( str(SNPIds[i]) + "\t" + str(SNP_effects[i])  + "\n")   
 
 ##################################################################################################
 # GCTA formatted kinship, as these are Lower Triangle matrices they have to be treated separately

@@ -26,8 +26,8 @@ import numpy as np
 #import numpy.linalg.inv
 import collections
 #import numpy.linalg.det
-from scipy.stats import chisqprob
-
+# from scipy.stats import chisqprob # name changed... the below may not work 
+from scipy.stats import chi2 as chisqprob
 
 def REML_GWAS (y, K = None,  X = None, ngrids=100, llim=-10, ulim=10, esp=1e-10, eigenSummary = None) :
     
@@ -265,14 +265,19 @@ def h2_SE_approx2(y, eigenValues_of_K) :
 
 # Kernel ridge via 'regular' Ridge formula:   Beta =(XtX +DI)^-1 XtY (THIS IS THE MAIN ONE I USE)
 def computeBLUPs_RidgeBLUP(y,X, delta) :  
-  
+    #print("computeBLUPs_RidgeBLUP, X is: " , X.dtype)
     Xt = X.T 
     n = Xt.shape[0]
-    I = np.identity(n)
+    I = np.identity(n, dtype = X.dtype)
     XtY = np.dot(Xt,y)
+    #print("I is: " , I.dtype)
+    #print("XtY, X is: " , XtY.dtype)
     XtXD_inv = np.linalg.inv( np.dot(Xt , X) +delta*I )
-      
+    #print("XtXD_inv, X is: " , X.dtype)
+    del Xt
     Beta_BLUP = np.dot(XtXD_inv , XtY)
+    del XtXD_inv
+    del XtY
     blup = np.dot(X , Beta_BLUP)
       
     result = collections.namedtuple('BLUP', 'BETA')

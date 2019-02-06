@@ -32,7 +32,8 @@ from scipy import stats
 # can disable individual QC filters by setting it to -1
 def genoQC_all(X, rsIds = None, replaceMissing = True, minObserved = 0.95, minMAF = 0.01, minVariance = 0.02) :
     indicesToRemove = list()
-    
+    indicesKept = np.asarray( range(X.shape[1]) )
+    #print("orig number of indices " + str(len(indicesKept) ) )
     numIndividuals = X.shape[0] 
     MAFs = np.zeros(X.shape[1] ) # create a sparse array that will hold the MAFs
     
@@ -70,7 +71,7 @@ def genoQC_all(X, rsIds = None, replaceMissing = True, minObserved = 0.95, minMA
                 print("SNP " + snpId + " has too low variance(" + str(SNP_var) + ")" )
         
         
-    print("QC removed" , len(indicesToRemove), " SNPs out of" , X.shape[1])
+
 
     rsIds_qc = None
     if rsIds is not None :
@@ -78,8 +79,11 @@ def genoQC_all(X, rsIds = None, replaceMissing = True, minObserved = 0.95, minMA
       
     MAFs_qc = np.delete(MAFs, indicesToRemove)
     X_qc = np.delete(X, indicesToRemove, axis=1)
+    indicesKept = np.delete(indicesKept, indicesToRemove)
+    print("QC removed" , len(indicesToRemove), " SNPs out of" , X.shape[1], " / indicesKept: (" , len(indicesKept), ")" )
     
-    return (  {"X":X_qc, "rsIds":rsIds_qc, "MAFs":MAFs_qc, "indicesToRemove": indicesToRemove } )
+    
+    return (  {"X":X_qc, "rsIds":rsIds_qc, "MAFs":MAFs_qc, "indicesToRemove": indicesToRemove, "indicesKept": indicesKept } )
 
 
 def computeMAFScore(MAFs, alpha = -0.25) : # computes the MAF Score as suggested by Speed 2017
@@ -190,9 +194,32 @@ def removeLowVarianceSNPs(X, rsIds = None, minVariance = 0.02) :
     return ( np.delete(X, indicesToRemove, axis=1) )
 
 
+    
+def standardise_Genotypes(X, rsIds = None) :   
+    return(zscore(X)) # if we don't cast this then this would upconvert everything to float64
 
-def standardise_Genotypes(X, rsIds = None) :      
-    return(stats.zscore(X))
+
+
+
+# Sum over an axis is a reduction operation so the specified axis disappears.  
+def zscore(a, axis=0, EPSILON = -1):
+    a = a.astype('float32')  # if we don't cast this then this would upconvert everything to float64
+    mns = a.mean(axis=axis)
+    sstd = a.std(axis=axis)
+    mns = mns.astype('float32')
+    sstd = sstd.astype('float32')
+    if EPSILON != -1 : sstd += EPSILON # for numerical stability
+    sstd[sstd==0] = 1 # dont want division by zero
+    #a = (a - mns) / sstd
+    a -= mns
+    a /= sstd
+    
+    return a, mns, sstd
+
+
+
+
+
 
 # this can thorw error: 
 # /BSU/Cluster_Apps/Python/3.6.0/lib/python3.6/site-packages/scipy/stats/stats.py:2247: RuntimeWarning: invalid value encountered in true_divide return (a - mns) / sstd
@@ -243,12 +270,20 @@ def standardise_Genotypes_01(X, convertDataType = -1) :
 
     return(X)
 
-
 def getSizeInMBs(myObject) :
-    return ( np.round( sys.getsizeof(myObject) / 1024/ 1024 )  )
+    if myObject is None : return 0.
+    return ( np.round( myObject.nbytes  / 1024/ 1024 )  )
 
 def getSizeInGBs(myObject) :
-    return ( np.round( sys.getsizeof(myObject) * 10 / 1024/ 1024 / 1024 ) / 10  )
+    if myObject is None : return 0.
+    return ( np.round( myObject.nbytes * 10 / 1024/ 1024 / 1024 ) / 10  )
+
+
+#def getSizeInMBs(myObject) :
+#    return ( np.round( sys.getsizeof(myObject) / 1024/ 1024 )  )
+#
+#def getSizeInGBs(myObject) :
+#    return ( np.round( sys.getsizeof(myObject) * 10 / 1024/ 1024 / 1024 ) / 10  )
 # z-sclae data 
 # from sklearn.preprocessing import StandardScaler
 #sc = StandardScaler()
